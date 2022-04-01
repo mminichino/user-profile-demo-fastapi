@@ -21,6 +21,8 @@ scope_name = 'profiles'
 net_arg = bool(strtobool(net_setting))
 tls_arg = bool(strtobool(use_ssl))
 auth_token = {}
+cluster = {}
+collections = {}
 
 cb_authenticator = PasswordAuthenticator(user_name, user_pass)
 cb_timeouts = ClusterTimeoutOptions(query_timeout=timedelta(seconds=30), kv_timeout=timedelta(seconds=30))
@@ -37,9 +39,8 @@ else:
     connect_str = "couchbase://" + cb_host + connect_opt
 
 
-async def get_collection(collection_name):
-    cluster = await get_cluster()
-    bucket = cluster.bucket(bucket_name)
+async def get_collection(cb_cluster, collection_name):
+    bucket = cb_cluster.bucket(bucket_name)
     await bucket.on_connect()
     scope = bucket.scope(scope_name)
     collection = scope.collection(collection_name)
@@ -135,52 +136,49 @@ app = FastAPI()
 
 
 @app.on_event("startup")
-async def set_auth_key():
+async def service_init():
     key_id = '1'
-    collection = await get_collection('service_auth')
+    cluster[1] = await get_cluster()
+    collections['service_auth'] = await get_collection(cluster[1], 'service_auth')
     doc_id = f"service_auth:{key_id}"
-    result = await collection.lookup_in(doc_id, [SD.get('token')])
+    result = await collections['service_auth'].lookup_in(doc_id, [SD.get('token')])
     auth_token[1] = result.content_as[str](0)
-    return auth_token
+    collections['user_data'] = await get_collection(cluster[1], 'user_data')
+    collections['user_images'] = await get_collection(cluster[1], 'user_images')
 
 
 @app.get("/api/v1/id/{document}", response_model=Profile)
 async def get_by_id(document: str, authorized: bool = Depends(verify_token)):
     if authorized:
-        collection = await get_collection('user_data')
-        profile = await get_profile(collection=collection, collection_name='user_data', document=document)
+        profile = await get_profile(collection=collections['user_data'], collection_name='user_data', document=document)
         return profile
 
 
 @app.get("/api/v1/nickname/{nickname}", response_model=List[Profile])
 async def get_by_nickname(nickname: str, authorized: bool = Depends(verify_token)):
     if authorized:
-        cluster = await get_cluster()
-        records = await query_profiles(cluster=cluster, collection_name='user_data', field='nickname', value=nickname)
+        records = await query_profiles(cluster=cluster[1], collection_name='user_data', field='nickname', value=nickname)
         return records
 
 
 @app.get("/api/v1/username/{username}", response_model=List[Profile])
 async def get_by_username(username: str, authorized: bool = Depends(verify_token)):
     if authorized:
-        cluster = await get_cluster()
-        records = await query_profiles(cluster=cluster, collection_name='user_data', field='user_id', value=username)
+        records = await query_profiles(cluster=cluster[1], collection_name='user_data', field='user_id', value=username)
         return records
 
 
 @app.get("/api/v1/picture/record/{document}", response_model=Image)
 async def get_image_by_id(document: str, authorized: bool = Depends(verify_token)):
     if authorized:
-        collection = await get_collection('user_images')
-        image = await get_profile(collection=collection, collection_name='user_images', document=document)
+        image = await get_profile(collection=collections['user_images'], collection_name='user_images', document=document)
         return image
 
 
 @app.get("/api/v1/picture/raw/{document}")
 async def binary_image_by_id(document: str, authorized: bool = Depends(verify_token)):
     if authorized:
-        collection = await get_collection('user_images')
-        record = await get_profile(collection=collection, collection_name='user_images', document=document)
+        record = await get_profile(collection=collections['user_images'], collection_name='user_images', document=document)
         image, codec = await get_image_data(record)
         content_type = f"image/{codec}"
         response_body = base64.b64decode(bytes(image, "utf-8"))
