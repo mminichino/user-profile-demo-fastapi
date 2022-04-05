@@ -183,3 +183,9 @@ async def binary_image_by_id(document: str, authorized: bool = Depends(verify_to
         content_type = f"image/{codec}"
         response_body = base64.b64decode(bytes(image, "utf-8"))
         return Response(content=response_body, media_type=content_type)
+
+@app.get("/healthz")
+async def health_check():
+    content_type = "text/html"
+    response_body = "<html>READY</html>"
+    return Response(content=response_body, media_type=content_type)
